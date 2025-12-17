@@ -1,0 +1,110 @@
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+canvas {
+  display: block;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+  line-height: 1.4;
+  background: #f7f7f7;
+  color: #222;
+}
+
+header {
+  background: #2c6e49;
+  color: white;
+  padding: 12px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+main {
+  padding: 16px;
+  max-width: 1000px;
+  margin: 18px auto;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  border-radius: 6px;
+}
+
+.view { margin-bottom: 12px; }
+.hidden { display:none; }
+
+table { width:100%; border-collapse: collapse; }
+th, td { border:1px solid #ddd; padding:8px; text-align:left; }
+th { background:#f0f0f0; }
+
+.controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
+.row { display:flex; gap:8px; margin-top:8px; }
+button { background:#2c6e49; color:white; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
+button.secondary { background:#666; }
+input[type="text"], input[type="password"], select, textarea { padding:6px 8px; border:1px solid #ccc; border-radius:4px; }
+
+.media-preview { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+.media-preview img { max-width:120px; max-height:90px; border-radius:4px; }
+
+/* Fixed action bar inside edit view */
+#editContainer { padding-bottom: 84px; }
+.fixed-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 1200; }
+.fixed-inner { background: rgba(44,110,73,0.95); padding: 8px 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); display:flex; gap:8px; }
+.fixed-inner button { background: white; color: #2c6e49; padding:8px 12px; border-radius:6px; }
+
+/* Media modal */
+#mediaModal { display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:2000; align-items:center; justify-content:center; }
+#mediaModal .modal-content { background:white; padding:12px; max-width:90%; max-height:85%; overflow:auto; border-radius:8px; }
+#mediaModal .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+#mediaModal img { max-width:100%; height:auto; display:block; margin-bottom:8px; }
+#mediaModal audio, #mediaModal video { width:100%; margin-bottom:8px; }
+
+footer { margin:12px auto; max-width:1000px; color:#666; text-align:center; }
+
+/* Observed count badge */
+#observedCountBadge.observed-badge { position: fixed; top: 20px; right: 20px; z-index: 2100; }
+#observedCountBadge { background: rgba(44,110,73,0.95); color: white; padding: 10px 14px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); font-weight:700; }
+#observedCountBadge span { font-size: 1.1em; margin-left:6px; }
+
+/* Subspecies styling */
+.subspecies-row { color: #777; font-style: italic; }
+.subspecies-row td { color: inherit; }
+.subspecies-indent { padding-left: 12px; }
+
+/* Floating top button (circular) */
+#scrollTopBtn {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #2c6e49;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+  cursor: pointer;
+  z-index: 2200;
+  font-weight: 700;
+}
+
+/* Family TOC at bottom-left */
+#familyToc {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  max-height: 40vh;
+  overflow: auto;
+  background: rgba(255,255,255,0.95);
+  border: 1px solid #ddd;
+  padding: 8px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+  z-index: 2100;
+}
+#familyToc button { display:block; width:100%; text-align:left; background:transparent; border:none; padding:6px 8px; cursor:pointer; color:#2c6e49; }
+#familyToc button:hover { background:#f0f6f2; }

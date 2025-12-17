@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>지금까지 본 새 - 베이스</title>
+
+    <link rel="stylesheet" type="text/css" href="style.css">
+
+    <!-- Keep p5 libraries for existing sketch if needed -->
+    <script src="libraries/p5.min.js"></script>
+    <script src="libraries/p5.sound.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <!-- Supabase JS (UMD) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js/dist/umd/supabase.min.js"></script>
+    <!-- SheetJS (엑셀 파싱) removed - import feature disabled -->
+    <!-- Optional embedded species data (generated from Excel) -->
+    <script src="species-data.js"></script>
+  </head>
+
+  <body>
+      <header>
+      <h1>지금까지 본 새</h1>
+      <div id="top-menu">
+      </div>
+    </header>
+
+    <main>
+      <!-- Signup view -->
+      <section id="signupView" class="view hidden">
+        <h2>회원가입</h2>
+        <form id="signupForm">
+          <label>이메일 (아이디): <input id="signupEmail" type="email" required></label>
+          <label>비밀번호: <input id="signupPw" type="password" required></label>
+          <label>비밀번호 확인: <input id="signupPwConfirm" type="password" required></label>
+          <div class="row">
+            <button type="submit">회원가입</button>
+            <button type="button" id="toLoginBtn">로그인으로 이동</button>
+          </div>
+        </form>
+        <p id="signupInfo" class="small"></p>
+      </section>
+
+      <!-- Login view -->
+      <section id="loginView" class="view">
+        <h2>로그인</h2>
+        <form id="loginForm">
+          <label>아이디: <input id="loginId" required></label>
+          <label>비밀번호: <input id="loginPw" type="password"></label>
+          <div class="row">
+            <button type="submit">로그인</button>
+            <button id="gotoSignupBtn" type="button">회원가입</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Menu + Pages -->
+      <nav id="mainMenu" class="hidden">
+        <button id="menuListBtn">종 목록</button>
+        <button id="menuEditBtn">종 목록 추가/수정</button>
+        <button id="logoutBtn">로그아웃</button>
+      </nav>
+
+      <!-- Species list view (3-1) -->
+      <section id="listView" class="view hidden">
+        <h2>[지금까지 본 새의 종 목록]</h2>
+        <div class="controls">
+          <button id="toggleDateBtn" class="secondary">날짜 보기</button>
+          <label>필터:
+            <select id="filterSelect">
+              <option value="all">전체</option>
+              <option value="observed">본 새</option>
+              <option value="not">안 본 새</option>
+            </select>
+          </label>
+          <button id="saveImageBtn">현재 페이지 이미지로 저장</button>
+        </div>
+
+        <div id="listContainer"></div>
+      </section>
+
+      <!-- Edit/Add view (3-2) -->
+      <section id="editView" class="view hidden">
+        <h2>[종 목록 추가/수정하기]</h2>
+        <form id="editForm">
+          <!-- Excel import removed — 목록은 기본 내장 데이터만 사용합니다. -->
+          <div id="editContainer"></div>
+              <div class="row">
+                <button type="button" id="saveBtn">완료 (저장)</button>
+                <button type="button" id="backToListBtn">목록으로 돌아가기</button>
+              </div>
+              <!-- Fixed action bar for edit view -->
+              <div id="editFixedBar" class="fixed-bar hidden">
+                <div class="fixed-inner">
+                  <button id="saveBtnFixed" type="button">완료 (저장)</button>
+                  <button id="backToListBtnFixed" type="button">목록으로 돌아가기</button>
+                </div>
+              </div>
+        </form>
+      </section>
+    </main>
+
+    <footer>
+      <small>로컬 브라우저 저장(localStorage) 기반 데모입니다. 실제 서비스에는 서버 백엔드가 필요합니다.</small>
+    </footer>
+
+    <!-- Media modal -->
+    <div id="mediaModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <strong>미디어 보기</strong>
+          <button id="closeMediaModal">닫기</button>
+        </div>
+        <div id="mediaModalBody"></div>
+      </div>
+    </div>
+
+    <!-- Observed count badge (floating, shown on list/edit views) -->
+    <div id="observedCountBadge" class="observed-badge hidden">
+      총 관찰 종: <span id="observedCount">0</span>
+    </div>
+
+    <script src="sketch.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
