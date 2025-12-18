@@ -33,6 +33,23 @@
   try {
     console.debug('[SUPABASE INIT] USE_SUPABASE=', USE_SUPABASE, 'supabaseGlobal=', typeof supabase !== 'undefined', 'supabaseClient=', !!supabaseClient, 'SUPABASE_KEY_len=', String(SUPABASE_KEY || '').length);
   } catch(e) {}
+  // expose client for debugging and external checks
+  try { window.supabaseClient = supabaseClient; } catch(e) {}
+
+  // show banner if USE_SUPABASE is true but client is not initialized
+  try {
+    if (USE_SUPABASE && !supabaseClient) {
+      const existing = document.querySelector('#supabaseInitBanner');
+      if (!existing && typeof document !== 'undefined') {
+        const b = document.createElement('div');
+        b.id = 'supabaseInitBanner';
+        b.style.position = 'fixed'; b.style.left = '0'; b.style.right = '0'; b.style.top = '0';
+        b.style.background = '#ffdede'; b.style.color = '#333'; b.style.padding = '8px'; b.style.zIndex = 99999;
+        b.textContent = 'Supabase 클라이언트 초기화에 실패했습니다. Netlify 환경변수나 키를 확인하세요.';
+        document.body.appendChild(b);
+      }
+    }
+  } catch(e) {}
 
   // Supabase network/error tracking and automatic fallback
   let supabaseErrorCount = 0;
