@@ -1,29 +1,9 @@
 (() => {
-        // Ensure we have a valid UUID user id for Supabase. If the `user` value looks like an email (from local fallback), try to resolve the authenticated user's UUID.
-        const resolvedUserId = await resolveSupabaseUserId(user);
-        if (!resolvedUserId) {
-          console.warn('[SAVE] could not resolve supabase user id for', user);
-          alert('Supabase에 저장하려면 정상적으로 로그인된 사용자가 필요합니다. 현재는 로컬 저장으로 대체됩니다.');
-          // fall through to localStorage save
-        } else {
-          // profiles 테이블에 species JSON 전체를 저장 using resolved UUID
-          // sanitize media entries to avoid uploading large embedded data URIs
-          const sanitized = (Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : []).map(sp => {
-            const copy = Object.assign({}, sp);
-            if (Array.isArray(copy.media)) {
-              copy.media = copy.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
-            }
-            return copy;
-          });
-          const { data, error } = await supabaseClient
-            .from('profiles')
-            .upsert({ user_id: resolvedUserId, species: sanitized }, { returning: 'minimal' });
-          if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
-          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after supabase save failed', e); }
-          return;
-        }
+  // --- Supabase 설정 ---
+  // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
+  const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
-  const USE_SUPABASE = true; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const USE_SUPABASE = false; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
@@ -32,23 +12,6 @@
   // debug: report supabase client/key state
   try {
     console.debug('[SUPABASE INIT] USE_SUPABASE=', USE_SUPABASE, 'supabaseGlobal=', typeof supabase !== 'undefined', 'supabaseClient=', !!supabaseClient, 'SUPABASE_KEY_len=', String(SUPABASE_KEY || '').length);
-  } catch(e) {}
-  // expose client for debugging and external checks
-  try { window.supabaseClient = supabaseClient; } catch(e) {}
-
-  // show banner if USE_SUPABASE is true but client is not initialized
-  try {
-    if (USE_SUPABASE && !supabaseClient) {
-      const existing = document.querySelector('#supabaseInitBanner');
-      if (!existing && typeof document !== 'undefined') {
-        const b = document.createElement('div');
-        b.id = 'supabaseInitBanner';
-        b.style.position = 'fixed'; b.style.left = '0'; b.style.right = '0'; b.style.top = '0';
-        b.style.background = '#ffdede'; b.style.color = '#333'; b.style.padding = '8px'; b.style.zIndex = 99999;
-        b.textContent = 'Supabase 클라이언트 초기화에 실패했습니다. Netlify 환경변수나 키를 확인하세요.';
-        document.body.appendChild(b);
-      }
-    }
   } catch(e) {}
 
   // Supabase network/error tracking and automatic fallback
@@ -207,27 +170,6 @@
   function setCurrentUser(name) { localStorage.setItem('bird_current', name); }
   function clearCurrentUser() { localStorage.removeItem('bird_current'); }
 
-  // Write species to localStorage with optional sanitization (omit large media data)
-  function writeSpeciesToLocal(user, list, keepMediaData = false) {
-    try {
-      const key = userKey(user || 'guest');
-      const copy = Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : [];
-      copy.forEach(sp => {
-        if (Array.isArray(sp.media)) {
-          sp.media = sp.media.map(m => {
-            if (keepMediaData && m.data) return m; // keep full object only if explicitly requested
-            return { name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null };
-          });
-        }
-      });
-      localStorage.setItem(key, JSON.stringify(copy));
-      return true;
-    } catch (e) {
-      console.warn('[LOCAL WRITE] failed', e);
-      return false;
-    }
-  }
-
   async function loadSpeciesFor(user) {
     // If Supabase is configured and a client exists, try loading from Supabase 'profiles' table (species JSON)
     if (supabaseClient && user) {
@@ -248,9 +190,8 @@
             console.warn('Supabase load error', error);
           }
           if (data && data.species) return normalizeSpecies(data.species);
-          // Remote has no stored species for this user. DO NOT auto-upsert defaults here —
-          // auto-upserting when a user simply logs in can overwrite another device's data.
-          mediaLog('remote-no-species', { resolvedUserId });
+          // 없으면 기본값을 저장 under the resolved UUID
+          await supabaseClient.from('profiles').upsert({ user_id: resolvedUserId, species: DEFAULT_SPECIES });
           return normalizeSpecies(structuredClone(DEFAULT_SPECIES));
         }
       } catch (e) { console.warn(e); }
@@ -261,7 +202,6 @@
     if (!raw) {
       try {
         localStorage.setItem(key, JSON.stringify(DEFAULT_SPECIES));
-        try { persistBackupLocal(); } catch(e) { console.warn('[BACKUP] persist after init failed', e); }
       } catch (e) {
         console.error('[LOAD] localStorage.setItem failed while initializing default species', e);
         alert('로컬 저장소에 기본 데이터를 쓸 수 없습니다. 브라우저 저장공간을 확인하세요.');
@@ -283,31 +223,17 @@
           // fall through to localStorage save
         } else {
           // profiles 테이블에 species JSON 전체를 저장 using resolved UUID
-          // sanitize media entries to avoid uploading large embedded data URIs
-          const sanitized = (Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : []).map(sp => {
-            const copy = Object.assign({}, sp);
-            if (Array.isArray(copy.media)) {
-              copy.media = copy.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
-            }
-            return copy;
-          });
           const { data, error } = await supabaseClient
             .from('profiles')
-            .upsert({ user_id: resolvedUserId, species: sanitized }, { returning: 'minimal' });
+            .upsert({ user_id: resolvedUserId, species: list }, { returning: 'minimal' });
           if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
-          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after supabase save failed', e); }
           return;
         }
       } catch (e) { console.warn(e); }
     }
     // fallback to localStorage
     try {
-      const ok = writeSpeciesToLocal(user || 'guest', list, false);
-      try { persistBackupLocal(); } catch(e) { console.warn('[BACKUP] persist after save failed', e); }
-      if (!ok) {
-        console.error('[SAVE] localStorage write reported failure');
-        alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
-      }
+      localStorage.setItem(userKey(user || 'guest'), JSON.stringify(list));
     } catch (e) {
       console.error('[SAVE] localStorage.setItem failed', e);
       alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
@@ -759,32 +685,6 @@
             preview.appendChild(node);
           });
         }
-        // attach change handlers for date, checkbox and memo to auto-save
-        try {
-          const dateEl = qs(`#obs_date_${s.id}`);
-          const chkEl = qs(`#obs_chk_${s.id}`);
-          const memoEl = qs(`#memo_${s.id}`);
-          const scheduleAutoSave = () => {
-            try {
-              if (window._speciesAutoSaveTimer) clearTimeout(window._speciesAutoSaveTimer);
-              window._speciesAutoSaveTimer = setTimeout(async () => {
-                try {
-                  if (currentUser) {
-                    await saveSpeciesFor(currentUser, species);
-                    mediaLog('autosave-supabase', { user: currentUser, count: species.length });
-                  } else {
-                    try { writeSpeciesToLocal('guest', species, false); } catch(e) { console.warn('[AUTOSAVE] local write failed', e); }
-                    try { persistBackupLocal(); } catch(e) { console.warn('[AUTOSAVE] persist backup failed', e); }
-                    mediaLog('autosave-local', { count: species.length });
-                  }
-                } catch (e) { console.warn('[AUTOSAVE] failed', e); mediaLog('autosave-failed', { error: String(e) }); }
-              }, 800);
-            } catch (e) { console.warn('[AUTOSAVE] schedule failed', e); }
-          };
-          if (dateEl) dateEl.addEventListener('change', (ev) => { s.observedDate = ev.target.value || ''; scheduleAutoSave(); });
-          if (chkEl) chkEl.addEventListener('change', (ev) => { s.observedChecked = !!ev.target.checked; scheduleAutoSave(); });
-          if (memoEl) memoEl.addEventListener('input', (ev) => { s.memo = ev.target.value; scheduleAutoSave(); });
-        } catch (e) { console.debug('[ATTACH HANDLERS] failed', e); }
         inp && inp.addEventListener('change', async (e) => {
           const files = Array.from(e.target.files || []);
           mediaLog('media-input-change', { speciesId: s.id, fileCount: files.length, files: files.map(f => ({ name: f.name, type: f.type, size: f.size })) });
@@ -804,34 +704,21 @@
                 const { data: urlData } = supabaseClient.storage.from('media').getPublicUrl(path);
                 const publicUrl = urlData && urlData.publicUrl ? urlData.publicUrl : '';
                 s.media = s.media || [];
-                // store url and storage path (DO NOT store large base64 data when using Supabase)
-                s.media.push({ name: f.name, type: f.type, url: publicUrl, path });
+                // store url, local preview data and storage path for potential signed URL retrieval later
+                s.media.push({ name: f.name, type: f.type, url: publicUrl, data: localPreview, path, preview: localPreview });
                 mediaLog('upload-success', { speciesId: s.id, file: f.name, path, publicUrl });
-                try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after upload failed', e); }
                 // show immediate local preview
                 addMediaPreviewElement(preview, { name: f.name, type: f.type, data: localPreview });
-                // immediately persist species (Supabase if available, otherwise local)
-                try {
-                  if (currentUser) {
-                    await saveSpeciesFor(currentUser, species);
-                    mediaLog('save-after-upload', { speciesId: s.id, user: currentUser });
-                  } else {
-                    try { writeSpeciesToLocal('guest', species, false); } catch(e) { console.warn('[UPLOAD SAVE] local write failed', e); }
-                    try { persistBackupLocal(); } catch(e) { console.warn('[UPLOAD SAVE] persist backup failed', e); }
-                    mediaLog('save-after-upload-local', { speciesId: s.id });
-                  }
-                } catch (e) { console.warn('[UPLOAD SAVE] failed', e); mediaLog('save-after-upload-failed', { error: String(e) }); }
               } catch (e) { console.warn(e); mediaLog('upload-exception', { speciesId: s.id, file: f.name, error: String(e) }); }
             } else {
               mediaLog('local-add-start', { speciesId: s.id, file: f.name });
               const data = await readFileAsDataURL(f);
-                    s.media = s.media || [];
-                    s.media.push({ name: f.name, type: f.type, data });
+              s.media = s.media || [];
+              s.media.push({ name: f.name, type: f.type, data });
               // append preview node with delete button (index is last)
               const newIdx = s.media.length - 1;
               preview.appendChild(createMediaPreviewNode(s.media[newIdx], s.id, newIdx));
               mediaLog('local-add-success', { speciesId: s.id, file: f.name, mediaIndex: newIdx });
-              try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after local add failed', e); }
             }
           }
           // clear input
@@ -888,66 +775,6 @@
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
-  }
-
-  // Backup utilities: produce a JSON snapshot and persist to localStorage
-  // Also keep a rotating history of backups under `bird_backups` (array of entries)
-  function makeBackupPayload() {
-    try {
-      // create a sanitized snapshot: strip large media data/preview fields
-      const cloned = Array.isArray(species) ? JSON.parse(JSON.stringify(species)) : [];
-      cloned.forEach(s => {
-        if (Array.isArray(s.media)) {
-          s.media = s.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
-        }
-      });
-      const payload = {
-        ts: new Date().toISOString(),
-        app: '지금까지 본 새',
-        version: 1,
-        species: cloned,
-        currentUser: currentUser || null
-      };
-      return payload;
-    } catch (e) { console.warn('[BACKUP] make payload failed', e); return null; }
-  }
-
-  function persistBackupLocal(payload) {
-    try {
-      if (!payload) payload = makeBackupPayload();
-      if (!payload) return null;
-      // main snapshot
-      try { localStorage.setItem('bird_backup_latest', JSON.stringify(payload)); } catch (e) { console.warn('[BACKUP] localStorage write failed', e); }
-      // history (bounded to 50 entries)
-      try {
-        const raw = localStorage.getItem('bird_backups');
-        let arr = [];
-        if (raw) arr = JSON.parse(raw) || [];
-        arr.push(payload);
-        if (arr.length > 50) arr = arr.slice(-50);
-        localStorage.setItem('bird_backups', JSON.stringify(arr));
-      } catch (e) { console.warn('[BACKUP] history write failed', e); }
-      mediaLog('backup-persisted', { ts: payload.ts, count: (payload.species || []).length });
-      return payload;
-    } catch (e) { console.warn('[BACKUP] persist failed', e); return null; }
-  }
-
-  // Optional: trigger a download of the backup JSON file
-  function downloadBackup(payload) {
-    try {
-      if (!payload) payload = makeBackupPayload();
-      if (!payload) return;
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `bird-backup-${payload.ts.replace(/[:.]/g,'-')}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => { try { URL.revokeObjectURL(url); } catch(_){} }, 2000);
-      mediaLog('backup-download', { file: a.download });
-    } catch (e) { console.warn('[BACKUP] download failed', e); }
   }
 
   // Create a preview node for a media item with optional delete button (used in edit view)
@@ -1017,15 +844,7 @@
         } catch (err) { console.debug('[MEDIA DELETE] remove exception', err); mediaLog('delete-storage-exception', { path: m.path, error: String(err) }); }
       }
       // persist immediately
-      try {
-        if (currentUser) {
-          await saveSpeciesFor(currentUser, species);
-        } else {
-          writeSpeciesToLocal('guest', species, false);
-          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after delete failed', e); }
-        }
-        mediaLog('delete-persisted', { speciesId: sid });
-      } catch(e){console.debug('[MEDIA DELETE] save failed', e); mediaLog('delete-persist-failed', { error: String(e) }); }
+      try { if (currentUser) await saveSpeciesFor(currentUser, species); else localStorage.setItem(userKey('guest'), JSON.stringify(species)); mediaLog('delete-persisted', { speciesId: sid }); } catch(e){console.debug('[MEDIA DELETE] save failed', e); mediaLog('delete-persist-failed', { error: String(e) }); } 
       // refresh edit view to update indices and previews
       renderEdit();
     });
@@ -1258,17 +1077,6 @@
         openSummaryWindow();
       });
       saveBtn.parentNode && saveBtn.parentNode.insertBefore(b, saveBtn.nextSibling);
-      // Add "백업 보기" button for inspecting local backup JSON
-      if (!qs('#viewBackupBtn')) {
-        const vb = document.createElement('button');
-        vb.id = 'viewBackupBtn';
-        vb.textContent = '백업 보기';
-        vb.style.marginLeft = '8px';
-        vb.addEventListener('click', () => {
-          showBackups();
-        });
-        saveBtn.parentNode && saveBtn.parentNode.insertBefore(vb, saveBtn.nextSibling);
-      }
     })();
 
     qs('#saveBtn') && qs('#saveBtn').addEventListener('click', async () => {
@@ -1301,23 +1109,6 @@
       renderList(qs('#filterSelect').value);
       showView('listView');
     });
-
-    // Backup viewer: open a new window/tab showing latest backup and history
-    function showBackups() {
-      try {
-        const latestRaw = localStorage.getItem('bird_backup_latest') || 'null';
-        const historyRaw = localStorage.getItem('bird_backups') || 'null';
-        const payload = {
-          latest: latestRaw === 'null' ? null : JSON.parse(latestRaw),
-          history: historyRaw === 'null' ? null : JSON.parse(historyRaw)
-        };
-        const w = window.open('', '_blank');
-        if (!w) { alert('팝업이 차단되었습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.'); return; }
-        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Bird Backups</title></head><body><h2>Latest Backup</h2><pre id="latest"></pre><h2>Backup History (most recent last)</h2><pre id="history"></pre></body><script>const payload=${JSON.stringify(payload)};document.getElementById('latest').textContent=JSON.stringify(payload.latest,null,2);document.getElementById('history').textContent=JSON.stringify(payload.history,null,2);</script></html>`;
-        w.document.open(); w.document.write(html); w.document.close();
-        mediaLog('backup-view-opened', { latestExists: !!payload.latest, historyCount: Array.isArray(payload.history) ? payload.history.length : 0 });
-      } catch (e) { console.warn('[BACKUP VIEW] failed', e); alert('백업 보기 중 오류가 발생했습니다. 콘솔을 확인하세요.'); }
-    }
 
     qs('#backToListBtn') && qs('#backToListBtn').addEventListener('click', () => {
       renderList(qs('#filterSelect').value);
