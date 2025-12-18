@@ -190,8 +190,9 @@
             console.warn('Supabase load error', error);
           }
           if (data && data.species) return normalizeSpecies(data.species);
-          // 없으면 기본값을 저장 under the resolved UUID
-          await supabaseClient.from('profiles').upsert({ user_id: resolvedUserId, species: DEFAULT_SPECIES });
+          // Remote has no stored species for this user. DO NOT auto-upsert defaults here —
+          // auto-upserting when a user simply logs in can overwrite another device's data.
+          mediaLog('remote-no-species', { resolvedUserId });
           return normalizeSpecies(structuredClone(DEFAULT_SPECIES));
         }
       } catch (e) { console.warn(e); }
@@ -1143,6 +1144,17 @@
         openSummaryWindow();
       });
       saveBtn.parentNode && saveBtn.parentNode.insertBefore(b, saveBtn.nextSibling);
+      // Add "백업 보기" button for inspecting local backup JSON
+      if (!qs('#viewBackupBtn')) {
+        const vb = document.createElement('button');
+        vb.id = 'viewBackupBtn';
+        vb.textContent = '백업 보기';
+        vb.style.marginLeft = '8px';
+        vb.addEventListener('click', () => {
+          showBackups();
+        });
+        saveBtn.parentNode && saveBtn.parentNode.insertBefore(vb, saveBtn.nextSibling);
+      }
     })();
 
     qs('#saveBtn') && qs('#saveBtn').addEventListener('click', async () => {
@@ -1175,6 +1187,23 @@
       renderList(qs('#filterSelect').value);
       showView('listView');
     });
+
+    // Backup viewer: open a new window/tab showing latest backup and history
+    function showBackups() {
+      try {
+        const latestRaw = localStorage.getItem('bird_backup_latest') || 'null';
+        const historyRaw = localStorage.getItem('bird_backups') || 'null';
+        const payload = {
+          latest: latestRaw === 'null' ? null : JSON.parse(latestRaw),
+          history: historyRaw === 'null' ? null : JSON.parse(historyRaw)
+        };
+        const w = window.open('', '_blank');
+        if (!w) { alert('팝업이 차단되었습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.'); return; }
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Bird Backups</title></head><body><h2>Latest Backup</h2><pre id="latest"></pre><h2>Backup History (most recent last)</h2><pre id="history"></pre></body><script>const payload=${JSON.stringify(payload)};document.getElementById('latest').textContent=JSON.stringify(payload.latest,null,2);document.getElementById('history').textContent=JSON.stringify(payload.history,null,2);</script></html>`;
+        w.document.open(); w.document.write(html); w.document.close();
+        mediaLog('backup-view-opened', { latestExists: !!payload.latest, historyCount: Array.isArray(payload.history) ? payload.history.length : 0 });
+      } catch (e) { console.warn('[BACKUP VIEW] failed', e); alert('백업 보기 중 오류가 발생했습니다. 콘솔을 확인하세요.'); }
+    }
 
     qs('#backToListBtn') && qs('#backToListBtn').addEventListener('click', () => {
       renderList(qs('#filterSelect').value);
