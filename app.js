@@ -3,7 +3,7 @@
   // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
   const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
-  const USE_SUPABASE = false; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const USE_SUPABASE = true; // Supabase 사용 여부 — 배포 시 true (로컬 테스트용으로 false로 설정 가능)
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
@@ -632,10 +632,10 @@
           </td>
           <td>
             <input type="file" id="${mediaInputId}" data-id="${s.id}" accept="image/*,audio/*,video/*" multiple>
+            <div class="media-preview" id="preview_${s.id}"></div>
           </td>
           <td>${s.special || ''}</td>
           <td>
-            <div class="media-preview" id="preview_${s.id}"></div>
             <textarea id="${memoId}" placeholder="메모">${s.memo || ''}</textarea>
           </td>`;
       } else {
@@ -649,10 +649,10 @@
           <td>${dateCell}</td>
           <td>
             <input type="file" id="${mediaInputId}" data-id="${s.id}" accept="image/*,audio/*,video/*" multiple>
+            <div class="media-preview" id="preview_${s.id}"></div>
           </td>
           <td>${s.special || ''}</td>
           <td>
-            <div class="media-preview" id="preview_${s.id}"></div>
             <textarea id="${memoId}" placeholder="메모">${s.memo || ''}</textarea>
           </td>`;
       }
@@ -878,6 +878,57 @@
     const body = qs('#mediaModalBody'); if (body) body.innerHTML = '';
   }
 
+  // Export current species data as JSON file for backup
+  function exportBackup() {
+    try {
+      const data = { user: currentUser, timestamp: new Date().toISOString(), species };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const name = `bird_backup_${currentUser || 'guest'}_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      console.error('[BACKUP] export failed', e);
+      alert('데이터 백업 중 오류가 발생했습니다. 콘솔을 확인하세요.');
+    }
+  }
+
+  // Import species data from JSON backup file
+  async function importBackupFile(evt) {
+    const file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const json = JSON.parse(reader.result);
+        if (!json || !Array.isArray(json.species)) {
+          alert('잘못된 백업 파일입니다.');
+          return;
+        }
+        if (!confirm('백업된 데이터를 불러와 덮어쓰시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
+        species = normalizeSpecies(json.species);
+        await saveSpeciesFor(currentUser, species);
+        buildHierarchy(species);
+        computeObservedFlags();
+        renderList('all');
+        renderEdit();
+        alert('백업 데이터가 복원되었습니다.');
+      } catch (e) {
+        console.error('[BACKUP] import failed', e);
+        alert('백업 복원 중 오류가 발생했습니다. 콘솔을 확인하세요.');
+      } finally {
+        evt.target.value = '';
+      }
+    };
+    reader.onerror = () => { alert('파일 읽기 중 오류가 발생했습니다.'); };
+    reader.readAsText(file);
+  }
+
   // Excel import feature removed — species list is provided by embedded data only.
 
   // Wire events
@@ -1008,6 +1059,11 @@
       showView('loginView');
       qs('#mainMenu').classList.add('hidden');
     });
+
+    // Data backup / restore
+    qs('#exportBackupBtn') && qs('#exportBackupBtn').addEventListener('click', exportBackup);
+    qs('#importBackupBtn') && qs('#importBackupBtn').addEventListener('click', () => qs('#importBackupInput').click());
+    qs('#importBackupInput') && qs('#importBackupInput').addEventListener('change', importBackupFile);
 
     // 데이터 초기화 UI/버튼 제거됨
 
