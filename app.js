@@ -1,9 +1,29 @@
 (() => {
-  // --- Supabase 설정 ---
-  // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
-  const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
+        // Ensure we have a valid UUID user id for Supabase. If the `user` value looks like an email (from local fallback), try to resolve the authenticated user's UUID.
+        const resolvedUserId = await resolveSupabaseUserId(user);
+        if (!resolvedUserId) {
+          console.warn('[SAVE] could not resolve supabase user id for', user);
+          alert('Supabase에 저장하려면 정상적으로 로그인된 사용자가 필요합니다. 현재는 로컬 저장으로 대체됩니다.');
+          // fall through to localStorage save
+        } else {
+          // profiles 테이블에 species JSON 전체를 저장 using resolved UUID
+          // sanitize media entries to avoid uploading large embedded data URIs
+          const sanitized = (Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : []).map(sp => {
+            const copy = Object.assign({}, sp);
+            if (Array.isArray(copy.media)) {
+              copy.media = copy.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
+            }
+            return copy;
+          });
+          const { data, error } = await supabaseClient
+            .from('profiles')
+            .upsert({ user_id: resolvedUserId, species: sanitized }, { returning: 'minimal' });
+          if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
+          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after supabase save failed', e); }
+          return;
+        }
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
-  const USE_SUPABASE = ture; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const USE_SUPABASE = true; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
@@ -170,6 +190,27 @@
   function setCurrentUser(name) { localStorage.setItem('bird_current', name); }
   function clearCurrentUser() { localStorage.removeItem('bird_current'); }
 
+  // Write species to localStorage with optional sanitization (omit large media data)
+  function writeSpeciesToLocal(user, list, keepMediaData = false) {
+    try {
+      const key = userKey(user || 'guest');
+      const copy = Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : [];
+      copy.forEach(sp => {
+        if (Array.isArray(sp.media)) {
+          sp.media = sp.media.map(m => {
+            if (keepMediaData && m.data) return m; // keep full object only if explicitly requested
+            return { name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null };
+          });
+        }
+      });
+      localStorage.setItem(key, JSON.stringify(copy));
+      return true;
+    } catch (e) {
+      console.warn('[LOCAL WRITE] failed', e);
+      return false;
+    }
+  }
+
   async function loadSpeciesFor(user) {
     // If Supabase is configured and a client exists, try loading from Supabase 'profiles' table (species JSON)
     if (supabaseClient && user) {
@@ -225,9 +266,17 @@
           // fall through to localStorage save
         } else {
           // profiles 테이블에 species JSON 전체를 저장 using resolved UUID
+          // sanitize media entries to avoid uploading large embedded data URIs
+          const sanitized = (Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : []).map(sp => {
+            const copy = Object.assign({}, sp);
+            if (Array.isArray(copy.media)) {
+              copy.media = copy.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
+            }
+            return copy;
+          });
           const { data, error } = await supabaseClient
             .from('profiles')
-            .upsert({ user_id: resolvedUserId, species: list }, { returning: 'minimal' });
+            .upsert({ user_id: resolvedUserId, species: sanitized }, { returning: 'minimal' });
           if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
           try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after supabase save failed', e); }
           return;
@@ -236,8 +285,12 @@
     }
     // fallback to localStorage
     try {
-      localStorage.setItem(userKey(user || 'guest'), JSON.stringify(list));
+      const ok = writeSpeciesToLocal(user || 'guest', list, false);
       try { persistBackupLocal(); } catch(e) { console.warn('[BACKUP] persist after save failed', e); }
+      if (!ok) {
+        console.error('[SAVE] localStorage write reported failure');
+        alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
+      }
     } catch (e) {
       console.error('[SAVE] localStorage.setItem failed', e);
       alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
@@ -689,6 +742,32 @@
             preview.appendChild(node);
           });
         }
+        // attach change handlers for date, checkbox and memo to auto-save
+        try {
+          const dateEl = qs(`#obs_date_${s.id}`);
+          const chkEl = qs(`#obs_chk_${s.id}`);
+          const memoEl = qs(`#memo_${s.id}`);
+          const scheduleAutoSave = () => {
+            try {
+              if (window._speciesAutoSaveTimer) clearTimeout(window._speciesAutoSaveTimer);
+              window._speciesAutoSaveTimer = setTimeout(async () => {
+                try {
+                  if (currentUser) {
+                    await saveSpeciesFor(currentUser, species);
+                    mediaLog('autosave-supabase', { user: currentUser, count: species.length });
+                  } else {
+                    try { writeSpeciesToLocal('guest', species, false); } catch(e) { console.warn('[AUTOSAVE] local write failed', e); }
+                    try { persistBackupLocal(); } catch(e) { console.warn('[AUTOSAVE] persist backup failed', e); }
+                    mediaLog('autosave-local', { count: species.length });
+                  }
+                } catch (e) { console.warn('[AUTOSAVE] failed', e); mediaLog('autosave-failed', { error: String(e) }); }
+              }, 800);
+            } catch (e) { console.warn('[AUTOSAVE] schedule failed', e); }
+          };
+          if (dateEl) dateEl.addEventListener('change', (ev) => { s.observedDate = ev.target.value || ''; scheduleAutoSave(); });
+          if (chkEl) chkEl.addEventListener('change', (ev) => { s.observedChecked = !!ev.target.checked; scheduleAutoSave(); });
+          if (memoEl) memoEl.addEventListener('input', (ev) => { s.memo = ev.target.value; scheduleAutoSave(); });
+        } catch (e) { console.debug('[ATTACH HANDLERS] failed', e); }
         inp && inp.addEventListener('change', async (e) => {
           const files = Array.from(e.target.files || []);
           mediaLog('media-input-change', { speciesId: s.id, fileCount: files.length, files: files.map(f => ({ name: f.name, type: f.type, size: f.size })) });
@@ -708,18 +787,29 @@
                 const { data: urlData } = supabaseClient.storage.from('media').getPublicUrl(path);
                 const publicUrl = urlData && urlData.publicUrl ? urlData.publicUrl : '';
                 s.media = s.media || [];
-                // store url, local preview data and storage path for potential signed URL retrieval later
-                s.media.push({ name: f.name, type: f.type, url: publicUrl, data: localPreview, path, preview: localPreview });
+                // store url and storage path (DO NOT store large base64 data when using Supabase)
+                s.media.push({ name: f.name, type: f.type, url: publicUrl, path });
                 mediaLog('upload-success', { speciesId: s.id, file: f.name, path, publicUrl });
                 try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after upload failed', e); }
                 // show immediate local preview
                 addMediaPreviewElement(preview, { name: f.name, type: f.type, data: localPreview });
+                // immediately persist species (Supabase if available, otherwise local)
+                try {
+                  if (currentUser) {
+                    await saveSpeciesFor(currentUser, species);
+                    mediaLog('save-after-upload', { speciesId: s.id, user: currentUser });
+                  } else {
+                    try { writeSpeciesToLocal('guest', species, false); } catch(e) { console.warn('[UPLOAD SAVE] local write failed', e); }
+                    try { persistBackupLocal(); } catch(e) { console.warn('[UPLOAD SAVE] persist backup failed', e); }
+                    mediaLog('save-after-upload-local', { speciesId: s.id });
+                  }
+                } catch (e) { console.warn('[UPLOAD SAVE] failed', e); mediaLog('save-after-upload-failed', { error: String(e) }); }
               } catch (e) { console.warn(e); mediaLog('upload-exception', { speciesId: s.id, file: f.name, error: String(e) }); }
             } else {
               mediaLog('local-add-start', { speciesId: s.id, file: f.name });
               const data = await readFileAsDataURL(f);
-              s.media = s.media || [];
-              s.media.push({ name: f.name, type: f.type, data });
+                    s.media = s.media || [];
+                    s.media.push({ name: f.name, type: f.type, data });
               // append preview node with delete button (index is last)
               const newIdx = s.media.length - 1;
               preview.appendChild(createMediaPreviewNode(s.media[newIdx], s.id, newIdx));
@@ -787,11 +877,18 @@
   // Also keep a rotating history of backups under `bird_backups` (array of entries)
   function makeBackupPayload() {
     try {
+      // create a sanitized snapshot: strip large media data/preview fields
+      const cloned = Array.isArray(species) ? JSON.parse(JSON.stringify(species)) : [];
+      cloned.forEach(s => {
+        if (Array.isArray(s.media)) {
+          s.media = s.media.map(m => ({ name: m.name || null, type: m.type || null, url: m.url || null, path: m.path || null }));
+        }
+      });
       const payload = {
         ts: new Date().toISOString(),
         app: '지금까지 본 새',
         version: 1,
-        species: Array.isArray(species) ? JSON.parse(JSON.stringify(species)) : [],
+        species: cloned,
         currentUser: currentUser || null
       };
       return payload;
@@ -907,7 +1004,7 @@
         if (currentUser) {
           await saveSpeciesFor(currentUser, species);
         } else {
-          localStorage.setItem(userKey('guest'), JSON.stringify(species));
+          writeSpeciesToLocal('guest', species, false);
           try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after delete failed', e); }
         }
         mediaLog('delete-persisted', { speciesId: sid });
