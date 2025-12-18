@@ -108,3 +108,9 @@ footer { margin:12px auto; max-width:1000px; color:#666; text-align:center; }
 }
 #familyToc button { display:block; width:100%; text-align:left; background:transparent; border:none; padding:6px 8px; cursor:pointer; color:#2c6e49; }
 #familyToc button:hover { background:#f0f6f2; }
+
+.gaegu-regular {
+  font-family: "Gaegu", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+}

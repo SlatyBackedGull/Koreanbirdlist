@@ -2,13 +2,108 @@
   // --- Supabase 설정 ---
   // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
   const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
-  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzNTk4MDMsImV4cCI6MjA4MDkzNTgwM30.Gup2zHT1y0kFkC2JMmjUHuWckojLqX3rIWFET1bwQaE';
-  const USE_SUPABASE = true; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
+  const USE_SUPABASE = false; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
     try { supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY); } catch(e) { console.warn('Supabase init failed', e); supabaseClient = null; }
   }
+  // debug: report supabase client/key state
+  try {
+    console.debug('[SUPABASE INIT] USE_SUPABASE=', USE_SUPABASE, 'supabaseGlobal=', typeof supabase !== 'undefined', 'supabaseClient=', !!supabaseClient, 'SUPABASE_KEY_len=', String(SUPABASE_KEY || '').length);
+  } catch(e) {}
+
+  // Supabase network/error tracking and automatic fallback
+  let supabaseErrorCount = 0;
+  const SUPABASE_ERROR_THRESHOLD = 5;
+  let supabaseFallbacked = false;
+
+  function triggerSupabaseFallback(reason) {
+    if (supabaseFallbacked) return;
+    supabaseFallbacked = true;
+    console.warn('[SUPABASE FALLBACK] reason=', reason);
+    try { supabaseClient = null; } catch(e){}
+    // show banner at top with retry and keep-local buttons
+    try {
+      const existing = document.querySelector('#supabaseStatusBanner');
+      if (existing) existing.remove();
+      const b = document.createElement('div');
+      b.id = 'supabaseStatusBanner';
+      b.style.position = 'fixed'; b.style.left = '0'; b.style.right = '0'; b.style.top = '0';
+      b.style.background = '#ffefc2'; b.style.color = '#333'; b.style.padding = '8px';
+      b.style.zIndex = 9999; b.style.display = 'flex'; b.style.justifyContent = 'space-between'; b.style.alignItems = 'center';
+      const msg = document.createElement('div');
+      msg.textContent = 'Supabase 연결 문제 감지 — 자동으로 로컬 저장 방식으로 전환되었습니다.';
+      b.appendChild(msg);
+      const controls = document.createElement('div');
+      const retry = document.createElement('button'); retry.textContent = '재시도'; retry.style.marginLeft = '8px';
+      retry.addEventListener('click', async () => {
+        supabaseErrorCount = 0; supabaseFallbacked = false;
+        try {
+          if (typeof supabase !== 'undefined') {
+            supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+          } else supabaseClient = null;
+          console.debug('[SUPABASE RETRY] reinitialized supabaseClient=', !!supabaseClient);
+          if (supabaseClient) { b.remove(); alert('Supabase 클라이언트가 재초기화되었습니다. 동작을 확인하세요.'); }
+          else alert('Supabase 클라이언트 초기화에 실패했습니다.');
+        } catch (e) { console.warn('[SUPABASE RETRY] failed', e); alert('Supabase 재연결 실패'); }
+      });
+      const keepLocal = document.createElement('button'); keepLocal.textContent = '로컬 모드 유지'; keepLocal.style.marginLeft = '8px';
+      keepLocal.addEventListener('click', () => { b.remove(); });
+      controls.appendChild(retry); controls.appendChild(keepLocal);
+      b.appendChild(controls);
+      document.body.appendChild(b);
+    } catch (e) { console.debug('[SUPABASE FALLBACK] banner create failed', e); }
+  }
+
+  function handleSupabaseErrorInfo(info) {
+    supabaseErrorCount++;
+    console.warn('[SUPABASE ERROR COUNT]', supabaseErrorCount, info);
+    if (supabaseErrorCount >= SUPABASE_ERROR_THRESHOLD) triggerSupabaseFallback(info);
+  }
+  // Wrap `fetch` to detect Supabase upstream 5xx or network errors and count them.
+  if (typeof window !== 'undefined' && window.fetch) {
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = async function(input, init) {
+      try {
+        const res = await _origFetch(input, init);
+        try {
+          const url = (typeof input === 'string') ? input : (input && input.url) || '';
+          if (url && url.indexOf(SUPABASE_URL) !== -1 && res && res.status >= 500) {
+            handleSupabaseErrorInfo({ status: res.status, url });
+          }
+        } catch(e){}
+        return res;
+      } catch (err) {
+        try {
+          const url = (typeof input === 'string') ? input : (input && input.url) || '';
+          if (url && url.indexOf(SUPABASE_URL) !== -1) {
+            handleSupabaseErrorInfo({ error: err && err.message || String(err), url });
+          }
+        } catch(e){}
+        throw err;
+      }
+    };
+  }
+
+    // Resolve a valid Supabase user UUID from a provided identifier.
+    // If `user` already looks like a UUID, return it. Otherwise, try to query
+    // the currently-authenticated user via Supabase client and return its id.
+    async function resolveSupabaseUserId(user) {
+      if (!supabaseClient || !user) return null;
+      const s = String(user || '');
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRe.test(s)) return s;
+      try {
+        if (supabaseClient && supabaseClient.auth && typeof supabaseClient.auth.getUser === 'function') {
+          const res = await supabaseClient.auth.getUser();
+          if (res && res.data && res.data.user && res.data.user.id) return res.data.user.id;
+          if (res && res.user && res.user.id) return res.user.id; // older return shape
+        }
+      } catch (e) { console.debug('[RESOLVE USER] error', e); }
+      return null;
+    }
 
   // DEFAULT_SPECIES는 워크스페이스에 생성된 species-data.js의
   // `window.EMBEDDED_DEFAULT_SPECIES`가 있으면 그것을 우선 사용합니다.
@@ -63,25 +158,38 @@
     // If Supabase is configured and a client exists, try loading from Supabase 'profiles' table (species JSON)
     if (supabaseClient && user) {
       try {
-        const { data, error } = await supabaseClient
-          .from('profiles')
-          .select('species')
-          .eq('user_id', user)
-          .single();
-        if (error && error.code !== 'PGRST116') {
-          console.warn('Supabase load error', error);
+        // If the provided `user` is not a UUID (e.g. an email used during local fallback),
+        // attempt to resolve the currently authenticated Supabase user id.
+        const resolvedUserId = await resolveSupabaseUserId(user);
+        if (!resolvedUserId) {
+          console.debug('[LOAD] could not resolve supabase user id for', user, 'falling back to localStorage');
+          // fall through to localStorage fallback
+        } else {
+          const { data, error } = await supabaseClient
+            .from('profiles')
+            .select('species')
+            .eq('user_id', resolvedUserId)
+            .single();
+          if (error && error.code !== 'PGRST116') {
+            console.warn('Supabase load error', error);
+          }
+          if (data && data.species) return normalizeSpecies(data.species);
+          // 없으면 기본값을 저장 under the resolved UUID
+          await supabaseClient.from('profiles').upsert({ user_id: resolvedUserId, species: DEFAULT_SPECIES });
+          return normalizeSpecies(structuredClone(DEFAULT_SPECIES));
         }
-        if (data && data.species) return normalizeSpecies(data.species);
-        // 없으면 기본값을 저장
-        await supabaseClient.from('profiles').upsert({ user_id: user, species: DEFAULT_SPECIES });
-        return normalizeSpecies(structuredClone(DEFAULT_SPECIES));
       } catch (e) { console.warn(e); }
     }
     // fallback: localStorage
     const key = userKey(user || 'guest');
     const raw = localStorage.getItem(key);
     if (!raw) {
-      localStorage.setItem(key, JSON.stringify(DEFAULT_SPECIES));
+      try {
+        localStorage.setItem(key, JSON.stringify(DEFAULT_SPECIES));
+      } catch (e) {
+        console.error('[LOAD] localStorage.setItem failed while initializing default species', e);
+        alert('로컬 저장소에 기본 데이터를 쓸 수 없습니다. 브라우저 저장공간을 확인하세요.');
+      }
       return normalizeSpecies(structuredClone(DEFAULT_SPECIES));
     }
     try { return normalizeSpecies(JSON.parse(raw)); } catch(e) { return normalizeSpecies(structuredClone(DEFAULT_SPECIES)); }
@@ -90,16 +198,30 @@
   async function saveSpeciesFor(user, list) {
     if (supabaseClient && user) {
       try {
-        // profiles 테이블에 species JSON 전체를 저장
-        const { data, error } = await supabaseClient
-          .from('profiles')
-          .upsert({ user_id: user, species: list }, { returning: 'minimal' });
-        if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + error.message); return; }
-        return;
+        // Ensure we have a valid UUID user id for Supabase. If the `user` value looks like
+        // an email (from local fallback), try to resolve the authenticated user's UUID.
+        const resolvedUserId = await resolveSupabaseUserId(user);
+        if (!resolvedUserId) {
+          console.warn('[SAVE] could not resolve supabase user id for', user);
+          alert('Supabase에 저장하려면 정상적으로 로그인된 사용자가 필요합니다. 현재는 로컬 저장으로 대체됩니다.');
+          // fall through to localStorage save
+        } else {
+          // profiles 테이블에 species JSON 전체를 저장 using resolved UUID
+          const { data, error } = await supabaseClient
+            .from('profiles')
+            .upsert({ user_id: resolvedUserId, species: list }, { returning: 'minimal' });
+          if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
+          return;
+        }
       } catch (e) { console.warn(e); }
     }
     // fallback to localStorage
-    localStorage.setItem(userKey(user || 'guest'), JSON.stringify(list));
+    try {
+      localStorage.setItem(userKey(user || 'guest'), JSON.stringify(list));
+    } catch (e) {
+      console.error('[SAVE] localStorage.setItem failed', e);
+      alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
+    }
   }
 
   // Views
@@ -828,17 +950,36 @@
       if (supabaseClient) {
         // Supabase 사용 시 이메일/비밀번호로 로그인 (id는 이메일로 사용하세요)
         (async () => {
-          const { data, error } = await supabaseClient.auth.signInWithPassword({ email: id, password: pw });
-          if (error) {
-            alert('로그인 실패: ' + error.message);
-            return;
+          try {
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email: id, password: pw });
+            if (error) {
+              console.error('[LOGIN] supabase error', error);
+              // detect missing API key message and fallback to local mode
+              const errStr = JSON.stringify(error || '');
+              if (errStr.includes('No API key') || errStr.includes('apikey') || (error && (error.message || '').includes('apikey'))) {
+                console.error('[LOGIN] Supabase API key appears missing or blocked. Disabling Supabase client and falling back to localStorage.');
+                try { supabaseClient = null; } catch(e){}
+                alert('Supabase 인증에 필요한 API 키가 누락되었거나 차단되었습니다. 로컬 저장 방식으로 대체합니다.');
+                // fallback to local login: treat the entered id as local user
+                setCurrentUser(id);
+                currentUser = id;
+                species = await loadSpeciesFor(currentUser);
+                showAppAfterLogin();
+                return;
+              }
+              alert('로그인 실패: ' + (error.message || JSON.stringify(error)));
+              return;
+            }
+            const user = data && data.user;
+            if (!user) { console.error('[LOGIN] no user returned', data); alert('로그인 실패: 사용자 없음'); return; }
+            currentUser = user.id;
+            setCurrentUser(currentUser);
+            species = await loadSpeciesFor(currentUser);
+            showAppAfterLogin();
+          } catch (err) {
+            console.error('[LOGIN] exception', err);
+            alert('로그인 중 오류가 발생했습니다. 콘솔을 확인하세요.');
           }
-          const user = data.user;
-          if (!user) { alert('로그인 실패: 사용자 없음'); return; }
-          currentUser = user.id;
-          setCurrentUser(currentUser);
-          species = await loadSpeciesFor(currentUser);
-          showAppAfterLogin();
         })();
       } else {
         // 기존 local 로그인 (임시)
@@ -884,6 +1025,22 @@
         a.click();
       }).catch(err => alert('이미지 저장 중 오류: ' + err));
     });
+
+    // Add "한 눈에 보기" summary button next to the save image button
+    (function(){
+      const saveBtn = qs('#saveImageBtn');
+      if (!saveBtn) return;
+      // avoid duplicate
+      if (qs('#summaryOverviewBtn')) return;
+      const b = document.createElement('button');
+      b.id = 'summaryOverviewBtn';
+      b.textContent = '한 눈에 보기';
+      b.style.marginLeft = '8px';
+      b.addEventListener('click', () => {
+        openSummaryWindow();
+      });
+      saveBtn.parentNode && saveBtn.parentNode.insertBefore(b, saveBtn.nextSibling);
+    })();
 
     qs('#saveBtn') && qs('#saveBtn').addEventListener('click', async () => {
       // collect memo and observedDate (year-month, optional -day)
@@ -951,6 +1108,264 @@
     }
 
     // Excel import UI removed — no handler.
+  }
+
+  // Build and open a summary page in a new window showing recent observed birds
+  function openSummaryWindow() {
+    // Collect observed items: prefer those with observedDate, then checked ones
+    const observedWithDate = species.filter(s => s.observedDate && String(s.observedDate).trim().length > 0)
+      .map(s => ({ id: s.id, kor: s.kor, sci: s.sci, date: s.observedDate, media: s.media || [] }));
+    const observedChecked = species.filter(s => (!s.observedDate || String(s.observedDate).trim().length===0) && s.observedChecked)
+      .map(s => ({ id: s.id, kor: s.kor, sci: s.sci, date: '', media: s.media || [] }));
+    // sort by date desc (ISO YYYY-MM-DD sorts lexicographically)
+    observedWithDate.sort((a,b) => (b.date || '').localeCompare(a.date || ''));
+    const items = observedWithDate.concat(observedChecked);
+
+    // map to feed entries with image src (prefer preview/data then url)
+    const feed = items.map(it => {
+      let img = '';
+      if (Array.isArray(it.media) && it.media.length > 0) {
+        const m = it.media[0];
+        img = m && (m.preview || m.data || m.url) || '';
+      }
+      return { id: it.id, kor: it.kor, date: it.date, img };
+    });
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return; }
+    const title = '한 눈에 보기 — 최근 관찰한 새들';
+    const html = `
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f6f8;color:#111}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#fff;border-bottom:1px solid #e6e6e8}
+  .container{padding:12px;display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px}
+  .card{position:relative;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.06);cursor:pointer}
+  .card img{display:block;width:100%;object-fit:cover;background:#ddd}
+  .overlay{position:absolute;left:0;right:0;bottom:0;padding:8px 10px;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.6));color:#fff}
+  .name{font-weight:700;font-size:14px}
+  .date{font-size:12px;opacity:0.9}
+  .empty{padding:40px;text-align:center;color:#666}
+  .controls{display:flex;gap:8px}
+  button{padding:8px 10px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer}
+  /* modal */
+  .modal{position:fixed;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:9999}
+  .modal .box{background:#000;border-radius:8px;max-width:95%;max-height:95%;overflow:hidden;display:flex;flex-direction:column}
+  .modal img{max-width:100%;max-height:80vh;display:block}
+  .modal .caption{color:#fff;padding:8px}
+  /* cloud */
+  .cloudWrap{position:relative;height:700px;background:linear-gradient(180deg,#fff,#fafafa);border-radius:8px;padding:12px;overflow:hidden}
+  .cloudItem{position:absolute;white-space:nowrap;color:#222;opacity:0.95;user-select:none}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><strong>${title}</strong></div>
+    <div class="controls">
+      <button id="showRecentBtn">가장 최근에 본 새</button>
+      <button id="closeBtn">닫기</button>
+    </div>
+  </div>
+  <div id="feedArea" style="padding:12px">
+    <div id="feed" class="container"></div>
+    <div id="cloud" class="cloudWrap" style="margin-top:12px"></div>
+  </div>
+  <div id="modal" class="modal"><div class="box"><img id="modalImg" src=""><div class="caption" id="modalCaption"></div></div></div>
+  <script>
+    const feedData = ${JSON.stringify(feed)};
+    // split by date presence and media
+    const dated = feedData.filter(f => f.date && String(f.date).trim().length>0);
+    const undated = feedData.filter(f => !f.date || String(f.date).trim().length===0);
+    // images feed keeps original ordering (recent first)
+    const withImages = feedData.filter(f => f.img && String(f.img).trim().length>0);
+    // cloud: items without images, split dated vs undated
+    const cloudDatedNoImage = feedData.filter(f => (!f.img || String(f.img).trim().length===0) && f.date && String(f.date).trim().length>0);
+    const cloudUndatedNoImage = feedData.filter(f => (!f.img || String(f.img).trim().length===0) && (!f.date || String(f.date).trim().length===0));
+    // dedupe by species key (kor, sci, or id) so each species appears only once in the cloud
+    function dedupeBySpeciesKey(arr) {
+      const seen = new Set();
+      const out = [];
+      for (const a of arr) {
+        if (!a) continue;
+        const key = (a.kor || a.sci || a.id || '').toString().trim().toLowerCase();
+        if (!key) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(a);
+      }
+      return out;
+    }
+    const cloudDatedNoImageUnique = dedupeBySpeciesKey(cloudDatedNoImage);
+    const cloudUndatedNoImageUnique = dedupeBySpeciesKey(cloudUndatedNoImage);
+
+    function clearChildren(el){ while(el && el.firstChild) el.removeChild(el.firstChild); }
+
+    function renderList(list) {
+      const container = document.getElementById('feed');
+      clearChildren(container);
+      if (!list || list.length === 0) { container.innerHTML = '<div class="empty">이미지 있는 관찰 항목이 없습니다.</div>'; return; }
+      const maxH = 340; const minH = 120;
+      const minW = 160; const maxW = 420;
+      const len = list.length || 1;
+      list.forEach((it, idx) => {
+        const c = document.createElement('div'); c.className='card';
+        const img = document.createElement('img');
+        img.src = it.img || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="100%" height="100%" fill="%23ddd"/></svg>';
+        // scale height and width by recency: earlier index = more recent => larger
+        const weight = (len - 1) - idx; // recent items have larger weight
+        const h = Math.round(minH + (weight / Math.max(1, len - 1)) * (maxH - minH));
+        const w = Math.round(minW + (weight / Math.max(1, len - 1)) * (maxW - minW));
+        img.style.height = h + 'px';
+        img.style.objectFit = 'cover';
+        c.style.flex = '0 0 ' + w + 'px';
+        c.appendChild(img);
+        const o = document.createElement('div'); o.className='overlay';
+        const n = document.createElement('div'); n.className='name'; n.textContent = it.kor || '';
+        const d = document.createElement('div'); d.className='date'; d.textContent = it.date || '';
+        o.appendChild(n); o.appendChild(d);
+        c.appendChild(o);
+        c.addEventListener('click', ()=> openModal(it));
+        container.appendChild(c);
+      });
+    }
+
+    function renderCloud(datedList, undatedList, retry=0) {
+      const wrap = document.getElementById('cloud');
+      clearChildren(wrap);
+      if ((!datedList || datedList.length===0) && (!undatedList || undatedList.length===0)) { wrap.innerHTML = '<div class="empty">미디어 없는 관찰 항목이 없습니다.</div>'; return; }
+      // We'll place dated items with collision avoidance; undated items fixed small size
+      const placedRects = [];
+      // normalize arguments: allow either (datedList, undatedList) or a single combined list
+      const list = (Array.isArray(datedList) ? datedList : []).concat(Array.isArray(undatedList) ? undatedList : []);
+      // helper to test overlap
+      function overlaps(r1, r2, pad=6) {
+        return !(r1.right + pad < r2.left - pad || r1.left - pad > r2.right + pad || r1.bottom + pad < r2.top - pad || r1.top - pad > r2.bottom + pad);
+      }
+      // Sort by recency (more recent first)
+      const sorted = list.slice();
+      // assume list is ordered by recency already; keep as-is
+      // temporary measurer (create before checking wrap size so we can remove it on retry)
+      const measurer = document.createElement('div');
+      measurer.style.position = 'absolute'; measurer.style.visibility='hidden'; measurer.style.whiteSpace='nowrap';
+      document.body.appendChild(measurer);
+      const wrapRect = wrap.getBoundingClientRect();
+      // If popup hasn't finished layout, its size may be zero — retry a few times before proceeding.
+      if ((wrapRect.width < 20 || wrapRect.height < 20) && retry < 20) {
+        setTimeout(()=> renderCloud(datedList, undatedList, retry+1), 100);
+        measurer.remove();
+        return;
+      }
+      for (let i = 0; i < sorted.length; i++) {
+        const it = sorted[i];
+        const span = document.createElement('div');
+        span.className = 'cloudItem';
+        const weight = Math.max(0, (sorted.length - 1) - i);
+        let fs = 18 + Math.round((weight / Math.max(1, sorted.length - 1)) * 36); // desired font size 18..54
+        span.textContent = it.kor || it.id || '';
+        span.title = it.date || '';
+        // measure and shrink if too wide
+        const maxAllowedW = Math.max(60, wrapRect.width * 0.5);
+        measurer.style.fontSize = fs + 'px';
+        measurer.textContent = span.textContent;
+        while ((measurer.offsetWidth + 8) > maxAllowedW && fs > 12) {
+          fs -= 1; measurer.style.fontSize = fs + 'px';
+        }
+        span.style.fontSize = fs + 'px';
+        const w = Math.min(wrapRect.width - 6, measurer.offsetWidth + 8);
+        const h = Math.min(wrapRect.height - 6, measurer.offsetHeight + 6);
+        // try finding a non-overlapping position
+        let placed = false;
+        const maxAttempts = 300;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          // bias recent items to center
+          const bias = 1 - (i / Math.max(1, sorted.length - 1)); // 1..0
+          const jitterX = (Math.random() - 0.5) * (wrapRect.width * (0.6 * (1 - bias) + 0.1));
+          const jitterY = (Math.random() - 0.5) * (wrapRect.height * (0.6 * (1 - bias) + 0.1));
+          const cx = wrapRect.width * 0.5 + jitterX;
+          const cy = wrapRect.height * (0.45) + jitterY;
+          const left = Math.max(4, Math.min(wrapRect.width - w - 4, Math.round(cx - w / 2)));
+          const top = Math.max(4, Math.min(wrapRect.height - h - 4, Math.round(cy - h / 2)));
+          const rect = { left, top, right: left + w, bottom: top + h };
+          let hit = false;
+          for (const pr of placedRects) {
+            if (overlaps(pr, rect, 6)) { hit = true; break; }
+          }
+          if (!hit) {
+            // place here (use px coordinates to avoid percent/zero-size issues)
+            span.style.left = left + 'px';
+            span.style.top = top + 'px';
+            // font size already set
+            wrap.appendChild(span);
+            placedRects.push(rect);
+            placed = true;
+            break;
+          }
+          // place undated items with fixed small size, avoid overlap by shifting if needed
+          const undSize = 12;
+          for (let j = 0; j < (undatedList || []).length; j++) {
+            const it = undatedList[j];
+            const span = document.createElement('div'); span.className='cloudItem'; span.textContent = it.kor || it.id || ''; span.title = it.date || '';
+            span.style.fontSize = undSize + 'px';
+            // try to place near bottom-left area with attempts
+            const measurer2 = document.createElement('div'); measurer2.style.position='absolute'; measurer2.style.visibility='hidden'; measurer2.style.whiteSpace='nowrap'; measurer2.style.fontSize = undSize + 'px'; measurer2.textContent = span.textContent; document.body.appendChild(measurer2);
+            const w2 = Math.min(wrapRect.width - 6, measurer2.offsetWidth + 8);
+            const h2 = Math.min(wrapRect.height - 6, measurer2.offsetHeight + 6);
+            document.body.removeChild(measurer2);
+            let placed = false;
+            for (let attempt=0; attempt<100; attempt++) {
+              const left = Math.round(Math.random() * (wrapRect.width - w2 - 8) + 4);
+              const top = Math.round(wrapRect.height * 0.6 + Math.random() * (wrapRect.height*0.35));
+              const rect = { left, top, right: left + w2, bottom: top + h2 };
+              let hit=false; for (const pr of placedRects) { if (overlaps(pr, rect, 4)) { hit=true; break; } }
+              if (!hit) { span.style.left = left + 'px'; span.style.top = top + 'px'; wrap.appendChild(span); placedRects.push(rect); placed=true; break; }
+            }
+            if (!placed) { // fallback
+              const left = Math.max(4, Math.min(wrapRect.width - w2 - 4, Math.round(Math.random() * (wrapRect.width - w2 - 8) + 4)));
+              const top = Math.max(4, Math.min(wrapRect.height - h2 - 4, Math.round(Math.random() * (wrapRect.height - h2 - 8) + 4)));
+              span.style.left = left + 'px'; span.style.top = top + 'px'; wrap.appendChild(span); placedRects.push({ left, top, right: left + w2, bottom: top + h2 });
+            }
+          }
+        }
+        if (!placed) {
+          // fall back: place at random without checking
+          const left = Math.max(4, Math.min(wrapRect.width - w - 4, Math.round(Math.random() * (wrapRect.width - w - 8) + 4)));
+          const top = Math.max(4, Math.min(wrapRect.height - h - 4, Math.round(Math.random() * (wrapRect.height - h - 8) + 4)));
+          span.style.left = left + 'px';
+          span.style.top = top + 'px';
+          wrap.appendChild(span);
+          placedRects.push({ left, top, right: left + w, bottom: top + h });
+        }
+      }
+      measurer.remove();
+    }
+
+    function openModal(item){
+      const modal = document.getElementById('modal');
+      const img = document.getElementById('modalImg');
+      const cap = document.getElementById('modalCaption');
+      img.src = item.img || '';
+      cap.textContent = (item.kor ? item.kor + (item.date ? ' — ' + item.date : '') : (item.date || ''));
+      modal.style.display = 'flex';
+    }
+    document.getElementById('modal').addEventListener('click', (e)=>{ if (e.target.id === 'modal' || e.target.id==='modalImg') document.getElementById('modal').style.display='none'; });
+
+    document.getElementById('showRecentBtn').addEventListener('click', ()=>{ renderList(withImages); renderCloud(cloudDatedNoImageUnique, cloudUndatedNoImageUnique); });
+    document.getElementById('closeBtn').addEventListener('click', ()=> window.close());
+    // initial render
+    renderList(withImages);
+    renderCloud(cloudDatedNoImageUnique, cloudUndatedNoImageUnique);
+  </script>
+</body>
+</html>
+`;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   function showAppAfterLogin() {
