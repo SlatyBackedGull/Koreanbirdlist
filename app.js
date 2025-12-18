@@ -3,7 +3,7 @@
   // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
   const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
-  const USE_SUPABASE = true; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const USE_SUPABASE = false; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
@@ -85,6 +85,22 @@
         throw err;
       }
     };
+  }
+
+  // Media logging helper to capture media-related events for debugging.
+  // Stored in `window.mediaLogs` (most-recent 200 entries persisted to localStorage).
+  window.mediaLogs = window.mediaLogs || [];
+  function mediaLog(action, details) {
+    try {
+      const entry = { ts: new Date().toISOString(), action: String(action || ''), details: details || null };
+      window.mediaLogs.push(entry);
+      // keep size bounded
+      if (window.mediaLogs.length > 200) window.mediaLogs = window.mediaLogs.slice(-200);
+      try { localStorage.setItem('media_logs', JSON.stringify(window.mediaLogs)); } catch (e) {}
+      console.info('[MEDIA LOG]', entry);
+      return entry;
+    } catch (e) { try { console.warn('[MEDIA LOG] failed', e); } catch(_){} }
+    return null;
   }
 
     // Resolve a valid Supabase user UUID from a provided identifier.
@@ -186,6 +202,7 @@
     if (!raw) {
       try {
         localStorage.setItem(key, JSON.stringify(DEFAULT_SPECIES));
+        try { persistBackupLocal(); } catch(e) { console.warn('[BACKUP] persist after init failed', e); }
       } catch (e) {
         console.error('[LOAD] localStorage.setItem failed while initializing default species', e);
         alert('로컬 저장소에 기본 데이터를 쓸 수 없습니다. 브라우저 저장공간을 확인하세요.');
@@ -211,6 +228,7 @@
             .from('profiles')
             .upsert({ user_id: resolvedUserId, species: list }, { returning: 'minimal' });
           if (error) { console.warn('Supabase save error', error); alert('저장 실패: ' + (error.message || JSON.stringify(error))); return; }
+          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after supabase save failed', e); }
           return;
         }
       } catch (e) { console.warn(e); }
@@ -218,6 +236,7 @@
     // fallback to localStorage
     try {
       localStorage.setItem(userKey(user || 'guest'), JSON.stringify(list));
+      try { persistBackupLocal(); } catch(e) { console.warn('[BACKUP] persist after save failed', e); }
     } catch (e) {
       console.error('[SAVE] localStorage.setItem failed', e);
       alert('로컬 저장에 실패했습니다. 브라우저 저장공간이 가득 찼을 수 있습니다. 콘솔을 확인하세요.');
@@ -670,31 +689,41 @@
           });
         }
         inp && inp.addEventListener('change', async (e) => {
-          const files = Array.from(e.target.files);
+          const files = Array.from(e.target.files || []);
+          mediaLog('media-input-change', { speciesId: s.id, fileCount: files.length, files: files.map(f => ({ name: f.name, type: f.type, size: f.size })) });
           for (const f of files) {
             // If Supabase is configured, upload to storage and store public URL
             if (supabaseClient && currentUser) {
               try {
                 const path = `user_${currentUser}/species_${s.id}/${Date.now()}_${f.name}`;
+                mediaLog('upload-start', { speciesId: s.id, file: f.name, path });
                 // create a local preview immediately so user sees the uploaded file even if the storage URL is private
                 const localPreview = await readFileAsDataURL(f);
                 const { data, error } = await supabaseClient.storage.from('media').upload(path, f);
-                if (error) { console.warn('upload error', error); }
+                if (error) {
+                  console.warn('upload error', error);
+                  mediaLog('upload-error', { speciesId: s.id, file: f.name, path, error });
+                }
                 const { data: urlData } = supabaseClient.storage.from('media').getPublicUrl(path);
                 const publicUrl = urlData && urlData.publicUrl ? urlData.publicUrl : '';
-                    s.media = s.media || [];
-                    // store url, local preview data and storage path for potential signed URL retrieval later
-                    s.media.push({ name: f.name, type: f.type, url: publicUrl, data: localPreview, path, preview: localPreview });
-                    // show immediate local preview
-                    addMediaPreviewElement(preview, { name: f.name, type: f.type, data: localPreview });
-              } catch (e) { console.warn(e); }
+                s.media = s.media || [];
+                // store url, local preview data and storage path for potential signed URL retrieval later
+                s.media.push({ name: f.name, type: f.type, url: publicUrl, data: localPreview, path, preview: localPreview });
+                mediaLog('upload-success', { speciesId: s.id, file: f.name, path, publicUrl });
+                try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after upload failed', e); }
+                // show immediate local preview
+                addMediaPreviewElement(preview, { name: f.name, type: f.type, data: localPreview });
+              } catch (e) { console.warn(e); mediaLog('upload-exception', { speciesId: s.id, file: f.name, error: String(e) }); }
             } else {
+              mediaLog('local-add-start', { speciesId: s.id, file: f.name });
               const data = await readFileAsDataURL(f);
-                    s.media = s.media || [];
-                    s.media.push({ name: f.name, type: f.type, data });
-                    // append preview node with delete button (index is last)
-                    const newIdx = s.media.length - 1;
-                    preview.appendChild(createMediaPreviewNode(s.media[newIdx], s.id, newIdx));
+              s.media = s.media || [];
+              s.media.push({ name: f.name, type: f.type, data });
+              // append preview node with delete button (index is last)
+              const newIdx = s.media.length - 1;
+              preview.appendChild(createMediaPreviewNode(s.media[newIdx], s.id, newIdx));
+              mediaLog('local-add-success', { speciesId: s.id, file: f.name, mediaIndex: newIdx });
+              try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after local add failed', e); }
             }
           }
           // clear input
@@ -712,6 +741,7 @@
   function addMediaPreviewElement(container, media) {
     if (!container) return;
     const src = (media && (media.data || media.url)) || media;
+    mediaLog('preview-create', { media: (media && media.name) || null, type: media && media.type, resolvedType: typeof src });
     console.debug('[MEDIA PREVIEW] media:', media, 'resolvedSrcType:', typeof src);
     let finalSrc = src;
     try {
@@ -719,7 +749,7 @@
         finalSrc = URL.createObjectURL(src);
         console.debug('[MEDIA PREVIEW] created objectURL for blob/file');
       }
-    } catch (e) { console.debug('[MEDIA PREVIEW] objectURL failed', e); }
+    } catch (e) { console.debug('[MEDIA PREVIEW] objectURL failed', e); mediaLog('preview-objecturl-failed', { error: String(e) }); }
     if ((media.type || '').startsWith('image')) {
       const img = document.createElement('img');
       img.src = finalSrc;
@@ -750,6 +780,59 @@
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
+  }
+
+  // Backup utilities: produce a JSON snapshot and persist to localStorage
+  // Also keep a rotating history of backups under `bird_backups` (array of entries)
+  function makeBackupPayload() {
+    try {
+      const payload = {
+        ts: new Date().toISOString(),
+        app: '지금까지 본 새',
+        version: 1,
+        species: Array.isArray(species) ? JSON.parse(JSON.stringify(species)) : [],
+        currentUser: currentUser || null
+      };
+      return payload;
+    } catch (e) { console.warn('[BACKUP] make payload failed', e); return null; }
+  }
+
+  function persistBackupLocal(payload) {
+    try {
+      if (!payload) payload = makeBackupPayload();
+      if (!payload) return null;
+      // main snapshot
+      try { localStorage.setItem('bird_backup_latest', JSON.stringify(payload)); } catch (e) { console.warn('[BACKUP] localStorage write failed', e); }
+      // history (bounded to 50 entries)
+      try {
+        const raw = localStorage.getItem('bird_backups');
+        let arr = [];
+        if (raw) arr = JSON.parse(raw) || [];
+        arr.push(payload);
+        if (arr.length > 50) arr = arr.slice(-50);
+        localStorage.setItem('bird_backups', JSON.stringify(arr));
+      } catch (e) { console.warn('[BACKUP] history write failed', e); }
+      mediaLog('backup-persisted', { ts: payload.ts, count: (payload.species || []).length });
+      return payload;
+    } catch (e) { console.warn('[BACKUP] persist failed', e); return null; }
+  }
+
+  // Optional: trigger a download of the backup JSON file
+  function downloadBackup(payload) {
+    try {
+      if (!payload) payload = makeBackupPayload();
+      if (!payload) return;
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bird-backup-${payload.ts.replace(/[:.]/g,'-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch(_){} }, 2000);
+      mediaLog('backup-download', { file: a.download });
+    } catch (e) { console.warn('[BACKUP] download failed', e); }
   }
 
   // Create a preview node for a media item with optional delete button (used in edit view)
@@ -801,18 +884,33 @@
       if (!sp) return;
       const m = sp.media && sp.media[midx];
       if (!m) return;
+      mediaLog('delete-attempt', { speciesId: sid, mediaIndex: midx, media: m.name || null, path: m.path || null });
       // remove from array
       sp.media.splice(midx, 1);
       // attempt to delete from Supabase storage if path present
       if (supabaseClient && m.path) {
         try {
+          mediaLog('delete-storage-start', { path: m.path });
           const { data, error } = await supabaseClient.storage.from('media').remove([m.path]);
-          if (error) console.debug('[MEDIA DELETE] supabase remove error', error);
-          else console.debug('[MEDIA DELETE] removed from storage', data);
-        } catch (err) { console.debug('[MEDIA DELETE] remove exception', err); }
+          if (error) {
+            console.debug('[MEDIA DELETE] supabase remove error', error);
+            mediaLog('delete-storage-error', { path: m.path, error });
+          } else {
+            console.debug('[MEDIA DELETE] removed from storage', data);
+            mediaLog('delete-storage-success', { path: m.path, data });
+          }
+        } catch (err) { console.debug('[MEDIA DELETE] remove exception', err); mediaLog('delete-storage-exception', { path: m.path, error: String(err) }); }
       }
       // persist immediately
-      try { if (currentUser) await saveSpeciesFor(currentUser, species); else localStorage.setItem(userKey('guest'), JSON.stringify(species)); } catch(e){console.debug('[MEDIA DELETE] save failed', e);} 
+      try {
+        if (currentUser) {
+          await saveSpeciesFor(currentUser, species);
+        } else {
+          localStorage.setItem(userKey('guest'), JSON.stringify(species));
+          try { persistBackupLocal(); } catch (e) { console.warn('[BACKUP] persist after delete failed', e); }
+        }
+        mediaLog('delete-persisted', { speciesId: sid });
+      } catch(e){console.debug('[MEDIA DELETE] save failed', e); mediaLog('delete-persist-failed', { error: String(e) }); }
       // refresh edit view to update indices and previews
       renderEdit();
     });
@@ -826,10 +924,12 @@
     const modal = qs('#mediaModal');
     const body = qs('#mediaModalBody');
     if (!s || !modal || !body) return;
+    mediaLog('open-modal', { speciesId: id, mediaCount: Array.isArray(s.media) ? s.media.length : 0 });
     console.debug('[OPEN MEDIA] id=', id, 'media=', s.media);
     body.innerHTML = '';
     if (!s.media || s.media.length === 0) {
       body.textContent = '미디어가 없습니다.';
+      mediaLog('open-modal-empty', { speciesId: id });
     } else {
       for (const m of s.media) {
         const src = (m && (m.data || m.url)) || m;
@@ -839,18 +939,21 @@
           if (src && typeof src !== 'string' && (src instanceof Blob || (src.constructor && src.constructor.name === 'File'))) {
             finalSrc = URL.createObjectURL(src);
             console.debug('[OPEN MEDIA] created objectURL for blob/file');
+            mediaLog('open-media-objecturl', { speciesId: id, name: m && m.name ? m.name : null });
           }
-        } catch (e) { console.debug('[OPEN MEDIA] objectURL failed', e); }
+        } catch (e) { console.debug('[OPEN MEDIA] objectURL failed', e); mediaLog('open-media-objecturl-failed', { error: String(e) }); }
         // If this is a supabase-hosted URL but the bucket is private, try creating a signed URL if we saved the path
         if (typeof finalSrc === 'string' && finalSrc.startsWith('http') && supabaseClient && m.path) {
           try {
+            mediaLog('signed-url-attempt', { speciesId: id, path: m.path });
             const { data: signedData, error: signedErr } = await supabaseClient.storage.from('media').createSignedUrl(m.path, 60);
-            if (signedErr) { console.debug('[OPEN MEDIA] createSignedUrl error', signedErr); }
+            if (signedErr) { console.debug('[OPEN MEDIA] createSignedUrl error', signedErr); mediaLog('signed-url-error', { path: m.path, error: signedErr }); }
             if (signedData && signedData.signedUrl) {
               finalSrc = signedData.signedUrl;
               console.debug('[OPEN MEDIA] using signed URL for private file');
+              mediaLog('signed-url-success', { path: m.path });
             }
-          } catch (e) { console.debug('[OPEN MEDIA] signed URL request failed', e); }
+          } catch (e) { console.debug('[OPEN MEDIA] signed URL request failed', e); mediaLog('signed-url-exception', { path: m.path, error: String(e) }); }
         }
         if (m.type && m.type.startsWith('image')) {
           const img = document.createElement('img');
