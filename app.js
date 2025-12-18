@@ -3,7 +3,7 @@
   // 아래 값을 프로젝트에서 받은 값으로 설정합니다.
   const SUPABASE_URL = 'https://cfwentohujfxavvgmnlx.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmd2VudG9odWpmeGF2dmdtbmx4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM1OTgwMywiZXhwIjoyMDgwOTM1ODAzfQ.JcXRna7LL4GKM5lfOaTTOXETayVZPu_7IuwGvGekwqE';
-  const USE_SUPABASE = false; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
+  const USE_SUPABASE = ture; // Supabase 사용 여부 — 현재 로컬 테스트용으로 false로 설정
   let supabaseClient = null;
 
   if (USE_SUPABASE && typeof supabase !== 'undefined') {
